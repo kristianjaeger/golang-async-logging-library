@@ -29,6 +29,10 @@ func New(w io.Writer) *Alog {
 	errorCh := make(chan string)
 	m := &sync.Mutex{}
 
+	fmt.Println(msgCh)
+	fmt.Println(errorCh)
+	fmt.Println(m)
+
 	if w == nil {
 		w = os.Stdout
 	}
