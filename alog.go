@@ -26,12 +26,16 @@ type Alog struct {
 // If nil is provided the output will be directed to os.Stdout.
 func New(w io.Writer) *Alog {
 	msgCh := make(chan string)
-	errorCh := make(chan string)
+	errorCh := make(chan error)
 	m := &sync.Mutex{}
+	shutdownCh := make(chan struct{})
+	shutdownCompleteCh := make(chan struct{})
 
 	fmt.Println(msgCh)
 	fmt.Println(errorCh)
 	fmt.Println(m)
+	fmt.Println(shutdownCh)
+	fmt.Println(shutdownCompleteCh)
 
 	if w == nil {
 		w = os.Stdout
@@ -44,11 +48,22 @@ func New(w io.Writer) *Alog {
 // Start begins the message loop for the asynchronous logger. It should be initiated as a goroutine to prevent
 // the caller from being blocked.
 func (al Alog) Start() {
+	var wg sync.WaitGroup
+
 	for {
 		func() {
-			messageString := <-al.msgCh
-			go al.write(messageString, nil)
+			select {
+			case msgFromMsgCh := <-al.msgCh:
+				messageString := msgFromMsgCh
+				wg.Add(1)
+				go al.write(messageString, nil)
+			case msgFromShutdownChannel := <-al.shutdownCh:
+				fmt.Println(msgFromShutdownChannel)
+				al.shutdown()
+				return
+			}
 		}()
+		wg.Wait()
 	}
 }
 
@@ -74,6 +89,8 @@ func (al Alog) write(msg string, wg *sync.WaitGroup) {
 }
 
 func (al Alog) shutdown() {
+	close(al.msgCh)
+	al.shutdownCompleteCh <- struct{}{}
 }
 
 // MessageChannel returns a channel that accepts messages that should be written to the log.
@@ -91,9 +108,19 @@ func (al Alog) ErrorChannel() chan error {
 // Stop shuts down the logger. It will wait for all pending messages to be written and then return.
 // The logger will no longer function after this method has been called.
 func (al Alog) Stop() {
+	al.shutdownCh <- struct{}{}
+	for {
+		select {
+		case completeMsg := <-al.shutdownCompleteCh:
+			fmt.Println(completeMsg)
+			return
+		}
+	}
 }
 
 // Write synchronously sends the message to the log output
-func (al Alog) Write(msg string) (int, error) {
-	return al.dest.Write([]byte(al.formatMessage(msg)))
+func (al Alog) Write(msg string, wg *sync.WaitGroup) (int, error) {
+	result, err := al.dest.Write([]byte(al.formatMessage(msg)))
+	wg.Done()
+	return result, err
 }
